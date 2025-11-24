@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Buddy Shooter: La Defensa Digital</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Press Start 2P', cursive;
+            overflow: hidden;
+            color: white;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+            border: 4px solid #4ecca3;
+        }
+
+        canvas {
+            background-color: #0f0f1a;
+            display: block;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .top-bar {
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .bottom-bar {
+            padding: 20px;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+        }
+
+        .lives { color: #ff4b4b; }
+        
+        .score-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid #4ecca3;
+        }
+
+        #coin-img-ui {
+            width: 30px;
+            height: 30px;
+        }
+
+        #game-over-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px;
+            text-align: center;
+            border: 2px solid #4ecca3;
+            display: none;
+            pointer-events: auto;
+            z-index: 10;
+            width: 80%;
+            max-width: 400px;
+        }
+
+        h1 { color: #4ecca3; margin-bottom: 20px; font-size: 24px; }
+        h2 { font-size: 16px; margin-bottom: 30px; }
+        
+        button {
+            background: #4ecca3;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 14px;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        button:hover { transform: scale(1.05); }
+
+        ul { list-style: none; padding: 0; text-align: left; margin-top: 20px; font-size: 12px; }
+        li { margin-bottom: 10px; border-bottom: 1px dashed #555; padding-bottom: 5px; display: flex; justify-content: space-between;}
+        .rank { color: #ffd700; margin-right: 10px;}
+
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="600" height="800"></canvas>
+        
+        <div id="ui-layer">
+            <div class="top-bar">
+                <div class="lives">VIDAS: <span id="lives-display">3</span></div>
+            </div>
+            <div class="bottom-bar">
+                <div class="score-container" id="score-target">
+                    <img src="coin.png" id="coin-img-ui" alt="Coin">
+                    <span>x </span>
+                    <span id="score-display">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="game-over-screen">
+            <h1>GAME OVER</h1>
+            <h2>Monedas: <span id="final-score">0</span></h2>
+            <button onclick="resetGame()">JUGAR DE NUEVO</button>
+            
+            <div style="margin-top: 30px;">
+                <h3>TOP 5 MEJORES</h3>
+                <ul id="high-scores-list"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // --- SISTEMA DE CARGA SEGURA ---
+        let imagesLoaded = 0;
+        let assetsCount = 2;
+        
+        // CAMBIO AQUÍ: Ahora busca .png
+        const imgBuddy = new Image();
+        imgBuddy.src = 'buddy_2.png';
+        imgBuddy.onload = () => checkLoad();
+        imgBuddy.onerror = () => {
+            console.warn("No se encontró buddy_2.png (asegúrate del nombre exacto).");
+            checkLoad(); 
+        };
+
+        // CAMBIO AQUÍ: Ahora busca .png
+        const imgCoin = new Image();
+        imgCoin.src = 'coin.png';
+        imgCoin.onload = () => checkLoad();
+        imgCoin.onerror = () => {
+            console.warn("No se encontró coin.png.");
+            checkLoad();
+        };
+
+        function checkLoad() {
+            imagesLoaded++;
+            if (imagesLoaded === assetsCount) {
+                console.log("Assets listos, iniciando...");
+                startGame();
+            }
+        }
+
+        // --- VARIABLES DE JUEGO ---
+        let gameRunning = true;
+        let score = 0;
+        let lives = 3;
+        let frames = 0;
+        let spawnRate = 100;
+
+        const player = {
+            x: canvas.width / 2 - 25,
+            y: canvas.height - 80,
+            width: 60,
+            height: 60,
+            speed: 7,
+            movingLeft: false,
+            movingRight: false
+        };
+
+        let lasers = [];
+        let enemies = [];
+        let particles = [];
+        let droppingCoins = [];
+
+        const enemyTypes = [
+            { type: 'hourglass', hp: 1, emoji: '⏳', speed: 2.5 },
+            { type: 'notebook',  hp: 2, emoji: '💻', speed: 1.8 },
+            { type: 'envelope',  hp: 3, emoji: '✉️', speed: 1.2 }
+        ];
+
+        // --- INPUTS ---
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'ArrowLeft') player.movingLeft = true;
+            if (e.code === 'ArrowRight') player.movingRight = true;
+            if (e.code === 'Space') shoot();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'ArrowLeft') player.movingLeft = false;
+            if (e.code === 'ArrowRight') player.movingRight = false;
+        });
+
+        function shoot() {
+            if (!gameRunning) return;
+            lasers.push({ x: player.x + player.width / 2 - 2, y: player.y, width: 4, height: 20, speed: 10 });
+        }
+
+        // --- LOGICA ---
+        class Enemy {
+            constructor() {
+                const rand = Math.random();
+                let typeData = rand < 0.5 ? enemyTypes[0] : (rand < 0.8 ? enemyTypes[1] : enemyTypes[2]);
+                this.x = Math.random() * (canvas.width - 40);
+                this.y = -50;
+                this.width = 40;
+                this.height = 40;
+                this.hp = typeData.hp;
+                this.speed = typeData.speed;
+                this.emoji = typeData.emoji;
+                this.maxHp = typeData.hp;
+            }
+            draw() {
+                ctx.font = "35px Arial";
+                ctx.fillText(this.emoji, this.x, this.y);
+            }
+            update() { this.y += this.speed; }
+        }
+
+        class FloatingCoin {
+            constructor(startX, startY) {
+                this.x = startX; this.y = startY; this.size = 30;
+                this.targetX = canvas.width - 60; this.targetY = canvas.height - 40;
+                this.arrived = false;
+            }
+            update() {
+                this.x += (this.targetX - this.x) * 0.08;
+                this.y += (this.targetY - this.y) * 0.08;
+                if (Math.hypot(this.targetX - this.x, this.targetY - this.y) < 10) {
+                    this.arrived = true;
+                    updateScore(1);
+                }
+            }
+            draw() {
+                if (imgCoin.complete && imgCoin.naturalHeight !== 0) {
+                    ctx.drawImage(imgCoin, this.x, this.y, 30, 30);
+                } else {
+                    // Fallback por si acaso
+                    ctx.beginPath(); ctx.arc(this.x+15, this.y+15, 15, 0, Math.PI*2);
+                    ctx.fillStyle = 'gold'; ctx.fill(); ctx.strokeStyle='white'; ctx.stroke();
+                }
+            }
+        }
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x; this.y = y;
+                this.vx = (Math.random() - 0.5) * 5;
+                this.vy = (Math.random() - 0.5) * 5;
+                this.alpha = 1; this.size = Math.random() * 5 + 2;
+            }
+            update() { this.x += this.vx; this.y += this.vy; this.alpha -= 0.03; }
+            draw() {
+                ctx.save(); ctx.globalAlpha = this.alpha; ctx.fillStyle = '#39ff14';
+                ctx.fillRect(this.x, this.y, this.size, this.size); ctx.restore();
+            }
+        }
+
+        function updateScore(val) { score += val; document.getElementById('score-display').innerText = score; }
+        function updateLives(val) { 
+            lives += val; 
+            document.getElementById('lives-display').innerText = lives;
+            if(lives <= 0) endGame();
+        }
+
+        function createExplosion(x, y) {
+            for (let i = 0; i < 10; i++) particles.push(new Particle(x, y));
+        }
+
+        function checkCollisions() {
+            lasers.forEach((l, li) => {
+                enemies.forEach((e, ei) => {
+                    if (l.x < e.x + e.width && l.x + l.width > e.x && l.y < e.y + e.height && l.y + l.height > e.y) {
+                        lasers.splice(li, 1); e.hp--;
+                        if (e.hp <= 0) {
+                            createExplosion(e.x + e.width/2, e.y + e.height/2);
+                            droppingCoins.push(new FloatingCoin(e.x, e.y));
+                            enemies.splice(ei, 1);
+                        }
+                    }
+                });
+            });
+            enemies.forEach((e, i) => {
+                if (e.y > canvas.height) {
+                    enemies.splice(i, 1);
+                    updateLives(-1);
+                }
+            });
+        }
+
+        function gameLoop() {
+            if (!gameRunning) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Player
+            if (player.movingLeft && player.x > 0) player.x -= player.speed;
+            if (player.movingRight && player.x < canvas.width - player.width) player.x += player.speed;
+            
+            if (imgBuddy.complete && imgBuddy.naturalHeight !== 0) {
+                ctx.drawImage(imgBuddy, player.x, player.y, player.width, player.height);
+            } else {
+                ctx.fillStyle = '#0f0'; ctx.fillRect(player.x, player.y, player.width, player.height);
+            }
+
+            // Lasers
+            ctx.fillStyle = 'white';
+            lasers.forEach((l, i) => { l.y -= l.speed; ctx.fillRect(l.x, l.y, l.width, l.height); if(l.y<0) lasers.splice(i,1); });
+
+            // Enemies
+            frames++;
+            if (frames % spawnRate === 0) enemies.push(new Enemy());
+            enemies.forEach(e => { e.update(); e.draw(); });
+
+            // Coins & Particles
+            droppingCoins.forEach((c, i) => { c.update(); c.draw(); if(c.arrived) droppingCoins.splice(i, 1); });
+            particles.forEach((p, index) => { p.update(); p.draw(); if (p.alpha <= 0) particles.splice(index, 1); });
+
+            checkCollisions();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function endGame() {
+            gameRunning = false;
+            document.getElementById('game-over-screen').style.display = 'block';
+            document.getElementById('final-score').innerText = score;
+            saveHighScore(score);
+            displayHighScores();
+        }
+
+        function saveHighScore(currentScore) {
+            let scores = JSON.parse(localStorage.getItem('buddyShooterHighScores')) || [];
+            scores.push(currentScore);
+            scores.sort((a, b) => b - a);
+            scores = scores.slice(0, 5);
+            localStorage.setItem('buddyShooterHighScores', JSON.stringify(scores));
+        }
+
+        function displayHighScores() {
+            const list = document.getElementById('high-scores-list');
+            list.innerHTML = '';
+            const scores = JSON.parse(localStorage.getItem('buddyShooterHighScores')) || [];
+            scores.forEach((s, index) => {
+                const li = document.createElement('li');
+                li.innerHTML = `<span class="rank">#${index + 1}</span> <span>${s} monedas</span>`;
+                list.appendChild(li);
+            });
+        }
+        
+        window.resetGame = function() {
+            score = 0; lives = 3; frames = 0; enemies = []; lasers = []; droppingCoins = []; particles = [];
+            document.getElementById('score-display').innerText = '0';
+            document.getElementById('lives-display').innerText = '3';
+            document.getElementById('game-over-screen').style.display = 'none';
+            gameRunning = true;
+            gameLoop();
+        };
+
+        function startGame() {
+            gameLoop();
+        }
+    </script>
+</body>
+</html>
